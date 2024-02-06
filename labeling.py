@@ -1,0 +1,22 @@
+import fml_lib
+import pandas as pd
+import sys
+
+if __name__ == "__main__":
+    dollar_bars = pd.read_csv("./july_2023_dollar_bars.csv")
+    dollar_bars['Timestamp'] = pd.to_datetime(dollar_bars['Timestamp'],format = '%Y%m%d %H:%M:%S:%f')
+    dollar_bars.set_index(["Timestamp"],inplace=True)
+    #print(dollar_bars.index)
+    close = dollar_bars['close']
+    daily_volatility = fml_lib.getDailyVol(dollar_bars.close,span0=100)
+    t_events = fml_lib.getTEvents(dollar_bars.close, daily_volatility)
+    numDays = 1
+    t1=close.index.searchsorted(t_events+pd.Timedelta(days=numDays))
+    t1=t1[t1<close.shape[0]]
+    t1=pd.Series(close.index[t1],index=t_events[:t1.shape[0]]) # NaNs at end
+    events = t1.to_frame("t1")
+    events['target'] = pd.Series(0.00001, index = t1.index)
+    out = fml_lib.applyPtSlOnT1(close, events, [1,1])
+    print(out)
+    bin = fml_lib.getBins(out, close)
+    print(bin)

@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-
+import sys
 def get_tick_bars( history, tick_count:int):
     tick_bars = history.iloc[::tick_count,:]
     
@@ -80,3 +80,63 @@ def get_dollar_bars( history,  dollar_count:int):
     dollar_bars["open"] = dollar_open
     dollar_bars["close"] = dollar_close
     return dollar_bars
+
+def getDailyVol(close,span0=100):
+    # daily volatility, reindexed to close
+    #breakpoint()
+    df0=close.index.searchsorted(close.index-pd.Timedelta(days=1))
+    df0=df0[df0>0]
+    df0=pd.Series(close.index[df0-1], index=close.index[close.shape[0]-df0.shape[0]:])
+    df0=close.loc[df0.index]/close.loc[df0.values].values-1 # daily returns
+    df0=df0.ewm(span=span0).std()
+    return df0
+
+def getTEvents(gRaw,h):
+    tEvents,sPos,sNeg=[],0,0
+    diff=gRaw.diff()
+    for i in diff.index[1:]:
+        sPos,sNeg=max(0,sPos+diff.loc[i]),min(0,sNeg+diff.loc[i])
+        if sNeg<-h.iloc[h.index.get_indexer([i], method='nearest')][0]:
+            sNeg=0
+            tEvents.append(i)
+        elif sPos>h.iloc[h.index.get_indexer([i], method='nearest')][0]:
+            sPos=0
+            tEvents.append(i)
+    return pd.DatetimeIndex(tEvents)
+def applyPtSlOnT1(close,events,ptSl):
+    # apply stop loss/profit taking, if it takes place before t1 (end of event)
+    out=events.copy(deep=True)
+    sl_list = []
+    pt_list = []
+    if ptSl[0]>0:
+        pt=ptSl[0]*events['target']
+    else:
+        pt=pd.Series(index=events.index) # NaNs
+    if ptSl[1]>0:
+        sl=-ptSl[1]*events['target']
+    else:
+        sl=pd.Series(index=events.index) # NaNs
+    for loc,t1 in events['t1'].fillna(close.index[-1]).items():
+        df0=close[loc:t1] # path prices
+        df0=(df0/close[loc]-1) # path returns
+        #print(sl[loc])
+        print(df0)
+        print(df0[df0<sl[loc]].index)
+        #sys.exit(1)
+        #out.loc[loc,'sl']=df0[df0<sl[loc]].index.min() # earliest stop loss.
+        #print(df0[df0<sl[loc]].index.min())
+        sl_list.append(df0[df0<sl[loc]].index.min())
+        pt_list.append(df0[df0>pt[loc]].index.min())
+        #out.loc[loc,'pt']=df0[df0>pt[loc]].index.min() # earliest profit taking.
+    out['sl'] = sl_list
+    out['pt'] = pt_list
+    return out
+
+def getBins(events, close):
+    events_ = events.dropna(subset=['t1'])
+    px = events_.index.union(events_['t1'].values).drop_duplicates()
+    px = close.reindex(px, method='bfill')
+    out = pd.DataFrame(index = events_.index)
+    out['ret'] = px.loc[events_['t1'].values].values/px.loc[events_.index]-1
+    out['bin'] = np.sign(out['ret'])
+    return out
