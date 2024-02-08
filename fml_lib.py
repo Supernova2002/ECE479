@@ -109,19 +109,17 @@ def applyPtSlOnT1(close,events,ptSl):
     sl_list = []
     pt_list = []
     if ptSl[0]>0:
-        pt=ptSl[0]*events['target']
+        pt=ptSl[0]*events['trgt']
     else:
         pt=pd.Series(index=events.index) # NaNs
     if ptSl[1]>0:
-        sl=-ptSl[1]*events['target']
+        sl=-ptSl[1]*events['trgt']
     else:
         sl=pd.Series(index=events.index) # NaNs
     for loc,t1 in events['t1'].fillna(close.index[-1]).items():
         df0=close[loc:t1] # path prices
         df0=(df0/close[loc]-1) # path returns
         #print(sl[loc])
-        print(df0)
-        print(df0[df0<sl[loc]].index)
         #sys.exit(1)
         #out.loc[loc,'sl']=df0[df0<sl[loc]].index.min() # earliest stop loss.
         #print(df0[df0<sl[loc]].index.min())
@@ -131,6 +129,23 @@ def applyPtSlOnT1(close,events,ptSl):
     out['sl'] = sl_list
     out['pt'] = pt_list
     return out
+
+def getEvents(close,tEvents,ptSl,trgt,minRet,t1=False):
+    #1) get target
+    trgt=trgt.loc[tEvents]
+    trgt=trgt[trgt>minRet] # minRet
+    #2) get t1 (max holding period)
+    if t1 is False:
+        t1=pd.Series(pd.NaT,index=tEvents)
+    #3) form events object, apply stop loss on t1
+    side_=pd.Series(1.,index=trgt.index)
+    events=pd.concat({'t1':t1,'trgt':trgt,'side':side_}, axis=1).dropna(subset=['trgt'])
+    df0=applyPtSlOnT1(close=close,events=events,ptSl=[ptSl,ptSl])
+    events=events.drop('side',axis=1)
+    events['t1']=df0.dropna(how='all')[['t1','sl','pt']].min(axis=1) # pd.min ignores nan
+    
+    return events
+
 
 def getBins(events, close):
     events_ = events.dropna(subset=['t1'])
