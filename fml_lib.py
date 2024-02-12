@@ -141,9 +141,8 @@ def getEvents(close,tEvents,ptSl,trgt,minRet,t1=False):
     side_=pd.Series(1.,index=trgt.index)
     events=pd.concat({'t1':t1,'trgt':trgt,'side':side_}, axis=1).dropna(subset=['trgt'])
     df0=applyPtSlOnT1(close=close,events=events,ptSl=[ptSl,ptSl])
-    events=events.drop('side',axis=1)
     events['t1']=df0.dropna(how='all')[['t1','sl','pt']].min(axis=1) # pd.min ignores nan
-    
+    events=events.drop('side',axis=1)
     return events
 
 
@@ -155,3 +154,105 @@ def getBins(events, close):
     out['ret'] = px.loc[events_['t1'].values].values/px.loc[events_.index]-1
     out['bin'] = np.sign(out['ret'])
     return out
+
+
+
+def mpNumCoEvents(closeIdx, t1, molecule):
+    '''
+    Compute the number of concurrent events per bar.
+    +molecule[0] is the date of the first event on which the weight will be computed
+    +molecule[-1] is the date of the last event on which the weight will be computed
+    Any event that starts before t1[molecule].max() impacts the count
+    '''
+    molecule = pd.to_datetime(molecule, errors="coerce")
+    closeIdx = closeIdx.index
+    t1 = t1.drop("trgt", axis=1)
+    t1 = t1.fillna(closeIdx[-1])
+    t1 = t1.fillna(closeIdx[-1]) # unclosed events still must impact other weights\
+    t1=t1[t1>=molecule[0]] # events that end at or after molecule[0]
+    t1 = t1.dropna()
+    t1=t1.loc[t1.index <= (t1.loc[molecule].max())[0]] # events that start at or before t1[molecule].max()
+    #2) count events spanning a bar
+    iloc=closeIdx.searchsorted(np.array([t1.index[0],((t1.max())[0])]))
+    count=pd.Series(0,index=closeIdx[iloc[0]:iloc[1]+1])
+    for tIn,tOut in t1.items():
+        for timeIn, timeOut in tOut.items():
+            count.loc[timeIn:timeOut]+=1.
+    
+    return count.loc[molecule[0]:(t1.loc[molecule].max())[0]]
+
+
+def mpSampleTW(t1,numCoEvents,molecule):
+    # Derive average uniqueness over the event's lifespan
+    wght=pd.Series(index=molecule)
+    for tIn,tOut in t1.loc[wght.index].items():
+        wght.loc[tIn]=(1./numCoEvents.loc[tIn:tOut]).mean()
+    return wght
+
+
+def getWeights(d,size):
+    # thres>0 drops insignificant weights
+    w=[1.]
+    for k in range(1,size):
+        w_=-w[-1]/k*(d-k+1)
+        w.append(w_)
+    w=np.array(w[::-1]).reshape(-1,1)
+    return w
+
+
+def getWeightsFFD(d, thres):
+    # thres>0 drops insignificant weights
+    w = [1.]
+    k = 1
+    while abs(w[-1]) >= thres:  
+        w_ = -w[-1] / k * (d - k + 1)
+        w.append(w_)
+        k += 1
+    w = np.array(w[ : : -1]).reshape(-1, 1)[1 : ]  
+    return w
+
+def fracDiff(series,d,thres=.01):
+    '''
+    Increasing width window, with treatment of NaNs
+    Note 1: For thres=1, nothing is skipped.
+    Note 2: d can be any positive fractional, not necessarily bounded [0,1].
+    '''
+    #1) Compute weights for the longest series
+    w=getWeights(d,series.shape[0])
+    #2) Determine initial calcs to be skipped based on weight-loss threshold
+    w_=np.cumsum(abs(w))
+    w_/=w_[-1]
+    skip=w_[w_>thres].shape[0]
+    #3) Apply weights to values
+    df={}
+    for name in series.columns:
+        seriesF,df_=series[[name]].fillna(method='ffill').dropna(),pd.Series()
+        for iloc in range(skip,seriesF.shape[0]):
+            loc=seriesF.index[iloc]
+            if not np.isfinite(series.loc[loc,name]):continue # exclude NAs
+            df_[loc]=np.dot(w[-(iloc+1):,:].T,seriesF.loc[:loc])[0,0]
+        df[name]=df_.copy(deep=True)
+    df=pd.concat(df,axis=1)
+    return df
+
+
+def fracDiff_FFD(series,d,thres=1e-5):
+    '''
+    Constant width window (new solution)
+    Note 1: thres determines the cut-off weight for the window
+    Note 2: d can be any positive fractional, not necessarily bounded [0,1].
+    '''
+    #1) Compute weights for the longest series
+    w=getWeightsFFD(d,thres)
+    width=len(w)-1
+    #2) Apply weights to values
+    df={}
+    for name in series.columns:
+        seriesF,df_=series[[name]].fillna(method='ffill').dropna(),pd.Series()
+        for iloc1 in range(width,seriesF.shape[0]):
+            loc0,loc1=seriesF.index[iloc1-width],seriesF.index[iloc1]
+            if not np.isfinite(series.loc[loc1,name]):continue # exclude NAs
+            df_[loc1]=np.dot(w.T,seriesF.loc[loc0:loc1])[0,0]
+            df[name]=df_.copy(deep=True)
+    df=pd.concat(df,axis=1)
+    return df
