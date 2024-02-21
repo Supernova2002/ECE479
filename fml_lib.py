@@ -299,7 +299,6 @@ class PurgedKFold(_BaseKFold):
     Test set is assumed contiguous (shuffle=False), w/o training samples in between
     '''
     def __init__(self,n_splits=3,t1=None,shuffle=False, pctEmbargo=0.):
-        print("init started")
         if not isinstance(t1,pd.Series):
             raise ValueError('Label Through Dates must be a pd.Series')
         super(PurgedKFold,self).__init__(n_splits,shuffle=shuffle,random_state=None)
@@ -319,6 +318,7 @@ class PurgedKFold(_BaseKFold):
             if maxT1Idx<X.shape[0]: # right train (with embargo)
                 train_indices=np.concatenate((train_indices,indices[maxT1Idx+mbrg:]))
             yield train_indices,test_indices
+
 def cvScore(clf,X,y,sample_weight,scoring='neg_log_loss',t1=None,cv=None,cvGen=None,pctEmbargo=None, shuffle=False):
     if scoring not in ['neg_log_loss','accuracy']:
         raise Exception('wrong scoring method.')
@@ -327,9 +327,11 @@ def cvScore(clf,X,y,sample_weight,scoring='neg_log_loss',t1=None,cv=None,cvGen=N
         cvGen=PurgedKFold(n_splits=cv,t1=t1,shuffle=shuffle, pctEmbargo=pctEmbargo) # purged
     score=[]
     for train,test in cvGen.split(X=X):
-        x_train = X.iloc[train].values.reshape(-1,1)
+        # think I need to throw in a check for whether or not this is 2 dimensional
+        x_train = X.iloc[train]
+        #print(len(x_train))
         fit=clf.fit(x_train,y=y.iloc[train],sample_weight=np.squeeze(sample_weight.iloc[train].values))
-        x_test = X.iloc[test].values.reshape(-1,1)
+        x_test = X.iloc[test]
         if scoring=='neg_log_loss':
             prob=fit.predict_proba(x_test)
             score_=-log_loss(y.iloc[test],prob,sample_weight=np.squeeze(sample_weight.iloc[test].values),labels=clf.classes_)
@@ -338,3 +340,124 @@ def cvScore(clf,X,y,sample_weight,scoring='neg_log_loss',t1=None,cv=None,cvGen=N
             score_=accuracy_score(y.iloc[test],pred,sample_weight= np.squeeze(sample_weight.iloc[test].values))
         score.append(score_)
     return np.array(score)
+
+
+def getTestData(n_features=40,n_informative=10,n_redundant=10,n_samples=10000):
+    # generate a random dataset for a classification problem
+    from sklearn.datasets import make_classification
+    trnsX,cont=make_classification(n_samples=n_samples,n_features=n_features,n_informative=n_informative,n_redundant=n_redundant,random_state=0,shuffle=False)
+    #print(pd.tseries.offsets.BDay())
+    #df0=pd.DatetimeIndex(periods=n_samples,freq=pd.tseries.offsets.BDay(),end=pd.Timestamp.today())
+    df0 = pd.bdate_range(periods = n_samples,end = pd.Timestamp.today())
+    trnsX,cont=pd.DataFrame(trnsX,index=df0), pd.Series(cont,index=df0).to_frame('bin')
+    df0=['I_'+str(i) for i in range(n_informative)]+['R_'+str(i) for i in range(n_redundant)]
+    df0+=['N_'+str(i) for i in range(n_features-len(df0))]
+    trnsX.columns=df0
+    cont['w']=1./cont.shape[0]
+    cont['t1']=pd.Series(cont.index,index=cont.index)
+    return trnsX,cont
+
+
+def get_eVec(dot,varThres):
+    # compute eVec from dot prod matrix, reduce dimension
+    eVal,eVec=np.linalg.eigh(dot)
+    idx=eVal.argsort()[::-1] # arguments for sorting eVal desc
+    eVal,eVec=eVal[idx],eVec[:,idx]
+    #2) only positive eVals
+    eVal=pd.Series(eVal,index=['PC_'+str(i+1) for i in range(eVal.shape[0])])
+    eVec=pd.DataFrame(eVec,index=dot.index,columns=eVal.index)
+    eVec=eVec.loc[:,eVal.index]
+    #3) reduce dimension, form PCs
+    cumVar=eVal.cumsum()/eVal.sum()
+    dim=cumVar.values.searchsorted(varThres)
+    eVal,eVec=eVal.iloc[:dim+1],eVec.iloc[:,:dim+1]
+    return eVal,eVec
+
+
+def orthoFeats(dfX,varThres=.95):
+    # Given a dataframe dfX of features, compute orthofeatures dfP
+    dfZ=dfX.sub(dfX.mean(),axis=1).div(dfX.std(),axis=1) # standardize
+    dot=pd.DataFrame(np.dot(dfZ.T,dfZ),index=dfX.columns,columns=dfX.columns)
+    eVal,eVec=get_eVec(dot,varThres)
+    print(eVal)
+    dfP=np.dot(dfZ,eVec)
+    return dfP
+
+
+
+def featImpMDI(fit,featNames):
+    # feat importance based on IS mean impurity reduction
+    df0={i:tree.feature_importances_ for i,tree in enumerate(fit.estimators_)}
+    #print(df0)
+    df0=pd.DataFrame.from_dict(df0,orient='index')
+    df0.columns=featNames
+    df0=df0.replace(0,np.nan) # because max_features=1
+    imp=pd.concat({'mean':df0.mean(),'std':df0.std()*df0.shape[0]**-.5},axis=1)
+    imp/=imp['mean'].sum()
+    return imp
+    
+
+def featImpMDA(clf,X,y,cv,sample_weight,t1,pctEmbargo,scoring='neg_log_loss'):
+    # feat importance based on OOS score reduction
+    if scoring not in ['neg_log_loss','accuracy']:
+        raise Exception('wrong scoring method.')
+    from sklearn.metrics import log_loss,accuracy_score
+    cvGen=PurgedKFold(n_splits=cv,t1=t1,pctEmbargo=pctEmbargo) # purged cv
+    scr0,scr1=pd.Series(),pd.DataFrame(columns=X.columns)
+    for i,(train,test) in enumerate(cvGen.split(X=X)):
+        X0,y0,w0=X.iloc[train,:],y.iloc[train],sample_weight.iloc[train]
+        X1,y1,w1=X.iloc[test,:],y.iloc[test],sample_weight.iloc[test]
+        fit=clf.fit(X=X0,y=y0,sample_weight=w0.values)
+        if scoring=='neg_log_loss':
+            prob=fit.predict_proba(X1)
+            scr0.loc[i]=-log_loss(y1,prob,sample_weight=w1.values,labels=clf.classes_)
+        else:
+            pred=fit.predict(X1)
+            scr0.loc[i]=accuracy_score(y1,pred,sample_weight=w1.values)
+        for j in X.columns:
+            X1_=X1.copy(deep=True)
+            np.random.shuffle(X1_[j].values) # permutation of a single column
+            if scoring=='neg_log_loss':
+                prob=fit.predict_proba(X1_)
+                scr1.loc[i,j]=-log_loss(y1,prob,sample_weight=w1.values,labels=clf.classes_)
+            else:
+                pred=fit.predict(X1_)
+                scr1.loc[i,j]=accuracy_score(y1,pred,sample_weight=w1.values)
+    imp=(-scr1).add(scr0,axis=0)
+    if scoring=='neg_log_loss':imp=imp/-scr1
+    else:imp=imp/(1.-scr1)
+    imp=pd.concat({'mean':imp.mean(),'std':imp.std()*imp.shape[0]**-.5},axis=1)
+    return imp,scr0.mean()
+
+
+
+def auxFeatImpSFI(featNames,clf,trnsX,cont,scoring,cvGen):
+    imp=pd.DataFrame(columns=['mean','std'])
+    for featName in featNames:
+        df0=cvScore(clf,X=trnsX[[featName]],y=cont['bin'],sample_weight=cont['w'],scoring=scoring,cvGen=cvGen)
+        imp.loc[featName,'mean']=df0.mean()
+        imp.loc[featName,'std']=df0.std()*df0.shape[0]**-.5
+    return imp
+
+
+def featImportance(trnsX,cont,n_estimators=1000,cv=10,max_samples=1.,pctEmbargo=0,scoring='accuracy',method='SFI',minWLeaf=0.,**kargs):
+    # feature importance from a random forest
+    from sklearn.tree import DecisionTreeClassifier
+    from sklearn.ensemble import BaggingClassifier
+    #1) prepare classifier,cv. max_features=1, to prevent masking
+    clf=DecisionTreeClassifier(criterion='entropy',max_features=1,class_weight='balanced',min_weight_fraction_leaf=minWLeaf)
+    clf=BaggingClassifier(estimator=clf,n_estimators=n_estimators,max_features=1.,max_samples=max_samples,oob_score=True)
+    fit=clf.fit(X=trnsX,y=cont['bin'],sample_weight=cont['w'].values)
+    oob=fit.oob_score_
+    if method=='MDI':
+        imp=featImpMDI(fit,featNames=trnsX.columns)
+        oos=cvScore(clf,X=trnsX,y=cont['bin'],cv=cv,sample_weight=cont['w'],t1=cont['t1'],pctEmbargo=pctEmbargo,scoring=scoring).mean()
+    elif method=='MDA':
+        imp,oos=featImpMDA(clf,X=trnsX,y=cont['bin'],cv=cv,sample_weight=cont['w'],t1=cont['t1'],pctEmbargo=pctEmbargo,scoring=scoring)
+    elif method=='SFI':
+        cvGen=PurgedKFold(n_splits=cv,t1=cont['t1'],pctEmbargo=pctEmbargo)
+        oos=cvScore(clf,X=trnsX,y=cont['bin'],sample_weight=cont['w'],scoring=scoring,
+        cvGen=cvGen).mean()
+        clf.n_jobs=1 # paralellize auxFeatImpSFI rather than clf
+        imp=auxFeatImpSFI(featNames=trnsX.columns, clf=clf,trnsX=trnsX,cont=cont,scoring=scoring,cvGen=cvGen)
+    return imp,oob,oos
