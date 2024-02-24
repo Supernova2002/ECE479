@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import sys
 from sklearn.model_selection._split import _BaseKFold
+import matplotlib.pyplot as mpl
 def get_tick_bars( history, tick_count:int):
     tick_bars = history.iloc[::tick_count,:]
     
@@ -434,6 +435,7 @@ def featImpMDA(clf,X,y,cv,sample_weight,t1,pctEmbargo,scoring='neg_log_loss'):
 def auxFeatImpSFI(featNames,clf,trnsX,cont,scoring,cvGen):
     imp=pd.DataFrame(columns=['mean','std'])
     for featName in featNames:
+        clf.n_jobs = -1
         df0=cvScore(clf,X=trnsX[[featName]],y=cont['bin'],sample_weight=cont['w'],scoring=scoring,cvGen=cvGen)
         imp.loc[featName,'mean']=df0.mean()
         imp.loc[featName,'std']=df0.std()*df0.shape[0]**-.5
@@ -461,3 +463,20 @@ def featImportance(trnsX,cont,n_estimators=1000,cv=10,max_samples=1.,pctEmbargo=
         clf.n_jobs=1 # paralellize auxFeatImpSFI rather than clf
         imp=auxFeatImpSFI(featNames=trnsX.columns, clf=clf,trnsX=trnsX,cont=cont,scoring=scoring,cvGen=cvGen)
     return imp,oob,oos
+
+
+def plotFeatImportance(pathOut,imp,method,tag=0,simNum=0,**kargs):
+    # plot mean imp bars with std
+    mpl.figure(figsize=(10,imp.shape[0]/5.))
+    imp=imp.sort_values('mean',ascending=True)
+    ax=imp['mean'].plot(kind='barh',color='b',alpha=.25,xerr=imp['std'],
+    error_kw={'ecolor':'r'})
+    if method=='MDI':
+        mpl.xlim([0,imp.sum(axis=1).max()])
+        mpl.axvline(1./imp.shape[0],linewidth=1,color='r',linestyle='dotted')
+        ax.get_yaxis().set_visible(False)
+    for i,j in zip(ax.patches,imp.index):ax.text(i.get_width()/2,i.get_y()+i.get_height()/2,j,ha='center',va='center',color='black')
+    mpl.title('tag='+str(tag)+' | simNum='+str(simNum))
+    mpl.savefig(pathOut+'featImportance_'+str(simNum)+'.png',dpi=100)
+    mpl.clf();mpl.close()
+    return
