@@ -2,7 +2,10 @@ import numpy as np
 import pandas as pd
 import sys
 from sklearn.model_selection._split import _BaseKFold
+from sklearn.model_selection import GridSearchCV
+from sklearn.pipeline import Pipeline
 import matplotlib.pyplot as mpl
+from scipy.stats import rv_continuous, kstest
 def get_tick_bars( history, tick_count:int):
     tick_bars = history.iloc[::tick_count,:]
     
@@ -347,8 +350,6 @@ def getTestData(n_features=40,n_informative=10,n_redundant=10,n_samples=10000):
     # generate a random dataset for a classification problem
     from sklearn.datasets import make_classification
     trnsX,cont=make_classification(n_samples=n_samples,n_features=n_features,n_informative=n_informative,n_redundant=n_redundant,random_state=0,shuffle=False)
-    #print(pd.tseries.offsets.BDay())
-    #df0=pd.DatetimeIndex(periods=n_samples,freq=pd.tseries.offsets.BDay(),end=pd.Timestamp.today())
     df0 = pd.bdate_range(periods = n_samples,end = pd.Timestamp.today())
     trnsX,cont=pd.DataFrame(trnsX,index=df0), pd.Series(cont,index=df0).to_frame('bin')
     df0=['I_'+str(i) for i in range(n_informative)]+['R_'+str(i) for i in range(n_redundant)]
@@ -480,3 +481,44 @@ def plotFeatImportance(pathOut,imp,method,tag=0,simNum=0,**kargs):
     mpl.savefig(pathOut+'featImportance_'+str(simNum)+'.png',dpi=100)
     mpl.clf();mpl.close()
     return
+
+
+
+def clfHyperFit(feat,lbl,t1,pipe_clf,param_grid,cv=3,bagging=[0,0,1.],rndSearchIter=0,n_jobs=-1,pctEmbargo=0,**fit_params):
+    from sklearn.model_selection import RandomizedSearchCV
+    from sklearn.ensemble import BaggingClassifier
+    if set(lbl.values)=={0,1}:
+        scoring='f1' # f1 for meta-labeling
+    else:
+        scoring='neg_log_loss' # symmetric towards all cases
+    #1) hyperparameter search, on train data
+    inner_cv=PurgedKFold(n_splits=cv,t1=t1,pctEmbargo=pctEmbargo) # purged
+    if rndSearchIter==0:
+        gs=GridSearchCV(estimator=pipe_clf,param_grid=param_grid,scoring=scoring,cv=inner_cv,n_jobs=n_jobs)
+    else:
+        gs=RandomizedSearchCV(estimator=pipe_clf,param_distributions=param_grid,scoring=scoring,cv=inner_cv,n_jobs=n_jobs,n_iter=rndSearchIter)
+    gs=gs.fit(feat,lbl,**fit_params).best_estimator_ # pipeline
+    #2) fit validated model on the entirety of the data
+    if bagging[1]>0:
+        gs=BaggingClassifier(estimator=MyPipeline(gs.steps),n_estimators=int(bagging[0]),max_samples=float(bagging[1]),max_features=float(bagging[2]),n_jobs=n_jobs)
+        gs=gs.fit(feat,lbl,sample_weight=fit_params[gs.base_estimator.steps[-1][0]+'__sample_weight'])
+        gs=Pipeline([('bag',gs)])
+    return gs
+
+
+
+class MyPipeline(Pipeline):
+    def fit(self,X,y,sample_weight=None,**fit_params):
+        if sample_weight is not None:
+            fit_params[self.steps[-1][0]+'__sample_weight']=sample_weight
+        return super(MyPipeline,self).fit(X,y,**fit_params)
+    
+
+
+class logUniform_gen(rv_continuous):
+    # random numbers log-uniformly distributed between 1 and e
+    def _cdf(self,x):
+        return np.log(x/self.a)/np.log(self.b/self.a)
+
+def logUniform(a=1,b=np.exp(1)):
+    return logUniform_gen(a=a,b=b,name='logUniform')
