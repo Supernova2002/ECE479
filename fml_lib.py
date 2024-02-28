@@ -522,3 +522,18 @@ class logUniform_gen(rv_continuous):
 
 def logUniform(a=1,b=np.exp(1)):
     return logUniform_gen(a=a,b=b,name='logUniform')
+
+
+def averageActiveSignals(signals):
+    tPnts=set(signals['t1'].dropna().values)
+    tPnts=tPnts.union(signals.index.values)
+    tPnts=list(tPnts);tPnts.sort()
+    out = pd.Series()
+    for loc in tPnts:
+        df0=(signals.index.values<=loc)&((loc<signals['t1'])|pd.isnull(signals['t1']))
+        act=signals[df0].index
+        if len(act)>0:
+            out[loc]=signals.loc[act,'signal'].mean()
+        else:
+            out[loc]=0
+    return out
