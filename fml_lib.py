@@ -523,7 +523,6 @@ class logUniform_gen(rv_continuous):
 def logUniform(a=1,b=np.exp(1)):
     return logUniform_gen(a=a,b=b,name='logUniform')
 
-
 def averageActiveSignals(signals):
     tPnts=set(signals['t1'].dropna().values)
     tPnts=tPnts.union(signals.index.values)
@@ -537,3 +536,28 @@ def averageActiveSignals(signals):
         else:
             out[loc]=0
     return out
+
+# Derives HHI concentration, i.e. what percent of the market a firm makes up
+def getHHI(betRet):
+    if betRet.shape[0]<=2:
+        return np.nan
+    wght=betRet/betRet.sum()
+    hhi=(wght**2).sum()
+    hhi=(hhi-betRet.shape[0]**-1)/(1.-betRet.shape[0]**-1)
+    return hhi
+
+def computeDD_TuW(series,dollars=False):
+    # compute series of drawdowns and the time under water associated with them
+    df0=series.to_frame('pnl')
+    df0['hwm']=series.expanding().max()
+    df1=df0.groupby('hwm').min().reset_index()
+    df1.columns=['hwm','min']
+    df1.index=df0['hwm'].drop_duplicates(keep='first').index # time of hwm
+    df1=df1[df1['hwm']>df1['min']] # hwm followed by a drawdown
+    if dollars:
+        dd=df1['hwm']-df1['min']
+    else:
+        dd=1-df1['min']/df1['hwm']
+    tuw=((df1.index[1:]-df1.index[:-1])/np.timedelta64(365,'D')).values# in years
+    tuw=pd.Series(tuw,index=df1.index[:-1])
+    return dd,tuw
