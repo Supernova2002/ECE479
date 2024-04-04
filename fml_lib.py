@@ -177,22 +177,20 @@ def mpNumCoEvents(closeIdx, t1, molecule):
     +molecule[-1] is the date of the last event on which the weight will be computed
     Any event that starts before t1[molecule].max() impacts the count
     '''
-    molecule = pd.to_datetime(molecule, errors="coerce")
-    closeIdx = closeIdx.index
-    t1 = t1.drop("trgt", axis=1)
-    t1 = t1.fillna(closeIdx[-1])
+    #molecule = pd.to_datetime(molecule)
+    #t1 = pd.to_datetime(t1)
+    #t1 = t1.drop("trgt", axis=1)
     t1 = t1.fillna(closeIdx[-1]) # unclosed events still must impact other weights
     t1=t1[t1>=molecule[0]] # events that end at or after molecule[0]
     t1 = t1.dropna()
-    t1=t1.loc[t1.index <= (t1.loc[molecule].max())[0]] # events that start at or before t1[molecule].max()
+    t1=t1.loc[:t1[molecule].max()] # events that start at or before t1[molecule].max()
     #2) count events spanning a bar
-    iloc=closeIdx.searchsorted(np.array([t1.index[0],((t1.max())[0])]))
+    iloc=closeIdx.searchsorted(np.array([t1.index[0],t1.max()]))
     count=pd.Series(0,index=closeIdx[iloc[0]:iloc[1]+1])
     for tIn,tOut in t1.items():
-        for timeIn, timeOut in tOut.items():
-            count.loc[timeIn:timeOut]+=1.
+        count.loc[tIn:tOut]+=1.
     
-    return count.loc[molecule[0]:(t1.loc[molecule].max())[0]]
+    return count.loc[molecule[0]:t1[molecule].max()]
 
 
 def mpSampleTW(t1,numCoEvents,molecule):
@@ -571,7 +569,8 @@ def computeDD_TuW(series,dollars=False):
     return dd,tuw
 
 
-def get_co_events(close, t1):
+def get_co_events(close,events):
+    '''
     first = True
     last_index = 0
     overlap_series = []
@@ -585,7 +584,11 @@ def get_co_events(close, t1):
                 print(unique_count)
                 overlap_series.append(unique_count)
             else:
-                print()
+                print("Not in there")
         last_index = index
     overlap_df = pd.concat(overlap_series)
+    return overlap_df
+    '''
+    overlap_df = mpNumCoEvents(close.index,events['t1'], events.index)
+    print(overlap_df)
     return overlap_df
