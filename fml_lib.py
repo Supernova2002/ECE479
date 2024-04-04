@@ -107,6 +107,7 @@ def getTEvents(gRaw,h):
         elif sPos>h.iloc[h.index.get_indexer([i], method='nearest')][0]:
             sPos=0
             tEvents.append(i)
+        print(f"Iteration {i}")
     return pd.DatetimeIndex(tEvents)
 def applyPtSlOnT1(close,events,ptSl):
     # apply stop loss/profit taking, if it takes place before t1 (end of event)
@@ -151,13 +152,20 @@ def getEvents(close,tEvents,ptSl,trgt,minRet,t1=False):
     return events
 
 
-def getBins(events, close):
+def getBins(events, close, num_days):
     events_ = events.dropna(subset=['t1'])
     px = events_.index.union(events_['t1'].values).drop_duplicates()
     px = close.reindex(px, method='bfill')
+    #print(px.loc[events_['t1'].values])
+    #print(px.loc[events_.index])
     out = pd.DataFrame(index = events_.index)
     out['ret'] = px.loc[events_['t1'].values].values/px.loc[events_.index]-1
     out['bin'] = np.sign(out['ret'])
+    vertical_barrier_reached = ((pd.to_datetime(px.loc[events_['t1'].values].index))-pd.to_datetime((px.loc[events_.index].index))) >= pd.Timedelta(days=num_days )
+    out['bin'] = out['bin'] * ~vertical_barrier_reached
+    #print((px.loc[events_['t1'].values].index))
+    print(~vertical_barrier_reached)
+    #print(px.loc[events_.index].index)
     return out
 
 
@@ -173,7 +181,7 @@ def mpNumCoEvents(closeIdx, t1, molecule):
     closeIdx = closeIdx.index
     t1 = t1.drop("trgt", axis=1)
     t1 = t1.fillna(closeIdx[-1])
-    t1 = t1.fillna(closeIdx[-1]) # unclosed events still must impact other weights\
+    t1 = t1.fillna(closeIdx[-1]) # unclosed events still must impact other weights
     t1=t1[t1>=molecule[0]] # events that end at or after molecule[0]
     t1 = t1.dropna()
     t1=t1.loc[t1.index <= (t1.loc[molecule].max())[0]] # events that start at or before t1[molecule].max()
@@ -561,3 +569,23 @@ def computeDD_TuW(series,dollars=False):
     tuw=((df1.index[1:]-df1.index[:-1])/np.timedelta64(365,'D')).values# in years
     tuw=pd.Series(tuw,index=df1.index[:-1])
     return dd,tuw
+
+
+def get_co_events(close, t1):
+    first = True
+    last_index = 0
+    overlap_series = []
+    for index, row in close.items():
+        if first:
+            first = False
+        else:
+            molecule = [last_index, index]
+            if molecule[0] in t1.index and molecule[1] in t1.index:
+                unique_count = mpNumCoEvents(close, t1, molecule)
+                print(unique_count)
+                overlap_series.append(unique_count)
+            else:
+                print()
+        last_index = index
+    overlap_df = pd.concat(overlap_series)
+    return overlap_df
