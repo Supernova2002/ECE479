@@ -6,6 +6,9 @@ from sklearn.model_selection import GridSearchCV
 from sklearn.pipeline import Pipeline
 import matplotlib.pyplot as mpl
 from scipy.stats import rv_continuous, kstest
+import multiprocessing as mp
+import time
+import datetime as dt
 def get_tick_bars( history, tick_count:int):
     tick_bars = history.iloc[::tick_count,:]
     
@@ -197,9 +200,19 @@ def mpSampleTW(t1,numCoEvents,molecule):
     # Derive average uniqueness over the event's lifespan
     wght=pd.Series(index=molecule)
     for tIn,tOut in t1.loc[wght.index].items():
-        wght.loc[tIn]=(1./numCoEvents.loc[tIn:tOut]).mean()
+        wght.loc[tIn]=(1./numCoEvents.loc[tIn:tOut].values).mean()
     return wght
 
+
+def mpSampleW(t1,numCoEvents,close,molecule):
+    # Derive sample weight by return attribution
+    ret=np.log(close).diff() # log-returns, so that they are additive
+    ret = ret.dropna()
+    wght=pd.Series(index=molecule)
+    for tIn,tOut in t1.loc[wght.index].items():
+        wght.loc[tIn]=(ret.loc[tIn:tOut].values/numCoEvents.loc[tIn:tOut].values).sum()
+
+    return wght
 
 def getWeights(d,size):
     # thres>0 drops insignificant weights
@@ -592,3 +605,5 @@ def get_co_events(close,events):
     overlap_df = mpNumCoEvents(close.index,events['t1'], events.index)
     print(overlap_df)
     return overlap_df
+
+
