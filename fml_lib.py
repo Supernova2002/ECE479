@@ -253,7 +253,8 @@ def fracDiff(series,d,thres=.01):
         seriesF,df_=series[[name]].fillna(method='ffill').dropna(),pd.Series()
         for iloc in range(skip,seriesF.shape[0]):
             loc=seriesF.index[iloc]
-            if not np.isfinite(series.loc[loc,name]):continue # exclude NAs
+            if not np.isfinite(series.loc[loc,name]):
+                continue # exclude NAs
             df_[loc]=np.dot(w[-(iloc+1):,:].T,seriesF.loc[:loc])[0,0]
         df[name]=df_.copy(deep=True)
     df=pd.concat(df,axis=1)
@@ -269,15 +270,17 @@ def fracDiff_FFD(series,d,thres=1e-5):
     #1) Compute weights for the longest series
     w=getWeightsFFD(d,thres)
     width=len(w)-1
+    print(width)
     #2) Apply weights to values
     df={}
     for name in series.columns:
         seriesF,df_=series[[name]].fillna(method='ffill').dropna(),pd.Series()
         for iloc1 in range(width,seriesF.shape[0]):
             loc0,loc1=seriesF.index[iloc1-width],seriesF.index[iloc1]
-            if not np.isfinite(series.loc[loc1,name]):continue # exclude NAs
+            if not np.isfinite(series.loc[loc1,name]):
+                continue # exclude NAs
             df_[loc1]=np.dot(w.T,seriesF.loc[loc0:loc1])[0,0]
-            df[name]=df_.copy(deep=True)
+        df[name]=df_.copy(deep=True)
     df=pd.concat(df,axis=1)
     return df
 
@@ -607,7 +610,7 @@ def get_co_events(close,events):
     return overlap_df
 
 
-def getTimeDecay(tW,clfLastW=1.):
+def getTimeDecay(tW,clfLastW=0.):
     # apply piecewise-linear decay to observed uniqueness (tW)
     # newest observation gets weight=1, oldest observation gets weight=clfLastW
     clfW=tW.sort_index().cumsum()
@@ -615,6 +618,7 @@ def getTimeDecay(tW,clfLastW=1.):
         slope=(1.-clfLastW)/clfW.iloc[-1]
     else:
         slope=1./((clfLastW+1)*clfW.iloc[-1])
+    print(slope)
     const=1.-slope*clfW.iloc[-1]
     clfW=const+slope*clfW
     clfW[clfW<0]=0
