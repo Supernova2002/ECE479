@@ -9,6 +9,7 @@ from scipy.stats import rv_continuous, kstest
 import multiprocessing as mp
 import time
 import datetime as dt
+from mp_engine import processJobs_, processJobs
 def get_tick_bars( history, tick_count:int):
     tick_bars = history.iloc[::tick_count,:]
     
@@ -306,6 +307,34 @@ def getAvgUniqueness(indM):
     breakpoint()
     avgU=u[u>0].mean() # average uniqueness
     return avgU
+
+
+def split_t1(t1, partitions):
+    return np.array_split(t1, partitions)
+
+def mp_func(indM):
+    # jit funcs about 2x as fast
+    #phi = jit_seqBootstrap(indM)
+    #seqU = njit_getAvgUniqueness(indM[phi].values).mean()
+    phi = seqBootstrap(indM)
+    seqU= getAvgUniqueness(indM[phi])
+    return seqU
+
+
+def main_mp(t1, partitions=100, cpus=8):
+    jobs = []
+    splits = split_t1(t1,partitions=partitions)
+    for part_t1 in splits:
+        indM = getIndMatrix(part_t1.index, part_t1)
+        job = {'func':mp_func,'indM':indM}
+        jobs.append(job)
+    if cpus==1: 
+        out= processJobs_(jobs)
+    else: 
+        print("processing")
+        out= processJobs(jobs,numThreads=cpus)
+    return pd.DataFrame(out)
+
 
 
 
