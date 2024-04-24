@@ -91,7 +91,6 @@ def get_dollar_bars( history,  dollar_count:int):
 
 def getDailyVol(close,span0=100):
     # daily volatility, reindexed to close
-    #breakpoint()
     df0=close.index.searchsorted(close.index-pd.Timedelta(days=1))
     df0=df0[df0>0]
     df0=pd.Series(close.index[df0-1], index=close.index[close.shape[0]-df0.shape[0]:])
@@ -99,18 +98,25 @@ def getDailyVol(close,span0=100):
     df0=df0.ewm(span=span0).std()
     return df0
 
-def getTEvents(gRaw,h):
+def getTEvents(gRaw,h, single=False):
     tEvents,sPos,sNeg=[],0,0
     diff=gRaw.diff()
     for i in diff.index[1:]:
         sPos,sNeg=max(0,sPos+diff.loc[i]),min(0,sNeg+diff.loc[i])
-        if sNeg<-h.iloc[h.index.get_indexer([i], method='nearest')][0]:
-            sNeg=0
-            tEvents.append(i)
-        elif sPos>h.iloc[h.index.get_indexer([i], method='nearest')][0]:
-            sPos=0
-            tEvents.append(i)
-        print(f"Iteration {i}")
+        if single:
+            if sNeg<-h:
+                sNeg=0
+                tEvents.append(i)
+            elif sPos>h:
+                sPos=0
+                tEvents.append(i)
+        else:
+            if sNeg<-h.iloc[h.index.get_indexer([i], method='nearest')][0]:
+                sNeg=0
+                tEvents.append(i)
+            elif sPos>h.iloc[h.index.get_indexer([i], method='nearest')][0]:
+                sPos=0
+                tEvents.append(i)
     return pd.DatetimeIndex(tEvents)
 def applyPtSlOnT1(close,events,ptSl):
     # apply stop loss/profit taking, if it takes place before t1 (end of event)
@@ -127,7 +133,7 @@ def applyPtSlOnT1(close,events,ptSl):
         sl=pd.Series(index=events.index) # NaNs
     for loc,t1 in events['t1'].fillna(close.index[-1]).items():
         df0=close[loc:t1] # path prices
-        df0=(df0/close[loc]-1) # path returns
+        df0=(df0/close.loc[loc]-1) # path returns
         #print(sl[loc])
         #sys.exit(1)
         #out.loc[loc,'sl']=df0[df0<sl[loc]].index.min() # earliest stop loss.
@@ -149,9 +155,9 @@ def getEvents(close,tEvents,ptSl,trgt,minRet,t1=False):
     #3) form events object, apply stop loss on t1
     side_=pd.Series(1.,index=trgt.index)
     events=pd.concat({'t1':t1,'trgt':trgt,'side':side_}, axis=1).dropna(subset=['trgt'])
+    print(close.index.dtype)
     df0=applyPtSlOnT1(close=close,events=events,ptSl=[ptSl,ptSl])
     events['t1']=df0.dropna(how='all')[['t1','sl','pt']].min(axis=1) # pd.min ignores nan
-    events=events.drop('side',axis=1)
     return events
 
 
@@ -167,7 +173,7 @@ def getBins(events, close, num_days):
     vertical_barrier_reached = ((pd.to_datetime(px.loc[events_['t1'].values].index))-pd.to_datetime((px.loc[events_.index].index))) >= pd.Timedelta(days=num_days )
     out['bin'] = out['bin'] * ~vertical_barrier_reached
     #print((px.loc[events_['t1'].values].index))
-    print(~vertical_barrier_reached)
+    #print(~vertical_barrier_reached)
     #print(px.loc[events_.index].index)
     return out
 
@@ -288,9 +294,9 @@ def fracDiff_FFD(series,d,thres=1e-5):
 def getIndMatrix(barIx,t1):
     # Get indicator matrix
     indM=pd.DataFrame(0,index=barIx,columns=range(t1.shape[0]))
+
     for i,(t0,t1) in enumerate(t1.items()):
-        for count, (t2, t3) in enumerate(t1.items()):
-            indM.loc[t2:t3,count]=1.
+        indM.loc[t0:t1,i]=1.
     return indM
 
 def getAvgUniqueness(indM):
@@ -301,6 +307,24 @@ def getAvgUniqueness(indM):
     avgU=u[u>0].mean() # average uniqueness
     return avgU
 
+
+
+def seqBootstrap(indM,sLength=None):
+    # Generate a sample via sequential bootstrap
+    if sLength is None:
+        sLength=indM.shape[1]
+    print(sLength)
+    phi=[]
+    while len(phi)<sLength:
+        avgU=pd.Series()
+        for i in indM:
+            indM_=indM[phi+[i]] # reduce indM
+            avgU.loc[i]=getAvgUniqueness(indM_).iloc[-1]
+        print(len(phi))
+        prob=avgU/avgU.sum() # draw prob
+        phi+=[np.random.choice(indM.columns,p=prob)]
+        
+    return phi
 
 
 def getTrainTimes(t1,testTimes):
