@@ -172,6 +172,7 @@ def getBins(events, close, num_days):
     out['ret'] = px.loc[events_['t1'].values].values/px.loc[events_.index]-1
     out['bin'] = np.sign(out['ret'])
     vertical_barrier_reached = ((pd.to_datetime(px.loc[events_['t1'].values].index))-pd.to_datetime((px.loc[events_.index].index))) >= pd.Timedelta(days=num_days )
+    #print(vertical_barrier_reached)
     out['bin'] = out['bin'] * ~vertical_barrier_reached
     #print((px.loc[events_['t1'].values].index))
     #print(~vertical_barrier_reached)
